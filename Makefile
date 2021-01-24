@@ -28,6 +28,30 @@ $(VENV_MARKER): $(VENV_REQUIREMENTS) | $(VENV_BIN_MARKER)
 	@printf "\e[36m--- Finished runtime deps ---\e[39m\n"
 
 
+# Testing, using a more classic venv approach.
+
+VENV_TEST_DIR:=".venv.test.d"
+VENV_TEST_REQUIREMENTS:=requirements.test.txt
+VENV_TEST_BIN_DIR:=$(VENV_DIR)/bin
+
+.PHONY: venv-test
+venv-test:
+	@printf "\e[36m--- Creating test venv ---\e[39m\n"
+	python3 -m venv $(VENV_TEST_DIR)
+	bash -c "source $(VENV_TEST_BIN_DIR)/activate && \
+	pip install --upgrade pip setuptools wheel && \
+	pip install -r $(VENV_TEST_REQUIREMENTS)"
+	@printf "\e[36m--- Finished test venv ---\e[39m\n"
+
+.PHONY: tests
+tests:
+	@printf "\e[36m--- Running tests ---\e[39m\n"
+	bash -c "source $(VENV_TEST_BIN_DIR)/activate && \
+	export PYTHONPATH=\$${PYTHONPATH:+\$$PYTHONPATH:}src && \
+	pytest"
+	@printf "\e[36m--- Finished tests ---\e[39m\n"
+
+
 # Interactive.
 
 .PHONY: python
@@ -54,3 +78,5 @@ run:
 .PHONY: clean
 clean:
 	$(RM) -r $(VENV_DIR)
+	$(RM) -r $(VENV_TEST_DIR)
+	$(RM) -r .pytest_cache
