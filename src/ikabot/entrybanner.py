@@ -125,6 +125,7 @@ class MemberMatcher(object):
         self.__enabled = False
 
     def add_ban(self, id_):
+        # TODO; is not really metadata, refactor when moving to database. Store when they were banned?
         self.__metadata["banned_ids"].append(id_)
 
     def __call__(self, member):
@@ -156,6 +157,8 @@ class GuildEntryBanner(object):
             log_channel (discord.TextChannel): channel to send logs to, if None the banner does not
                 do anything.
             enabled (bool): is it enabled
+            update_callback (callable): method to invoke when the internal data changes,
+                passes on itself as argument.
             matchers ([MemberMatcher], optional): list of MemberMatcher's for this banner.
         """
         self.__guild = guild
@@ -225,6 +228,9 @@ class GuildEntryBanner(object):
     def add_matcher(self, matcher):
         self.__matchers.append(matcher)
         self.__update_cb(self)
+        # TODO: using the index of a list is kinda naive, replace with a proper hash.
+        # Good enough for first prototype or for user interaction, not for loggin and
+        # auditing purposes.
         return len(self.__matchers) - 1
 
     def pop_matcher(self, id_):
@@ -323,30 +329,30 @@ class EntryBannerCog(commands.Cog):
             original = error.original
 
             if isinstance(original, InvalidMatcherId):
-                await ctx.reply("invalid pattern id.")
+                await ctx.reply("invalid pattern id.", mention_author=False)
                 return
 
             if isinstance(original, NoLogChannelConfigured):
-                await ctx.reply("configure a log channel (set-log-channel) before invoking any commands.")
+                await ctx.reply("configure a log channel (set-log-channel) before invoking any commands.", mention_author=False)
                 return
 
             if isinstance(original, EntryBannerCogError):
-                await ctx.reply(error.message)
+                await ctx.reply(error.message, mention_author=False)
                 return
 
         if isinstance(error, commands.errors.MissingRequiredArgument) or isinstance(error, commands.errors.BadArgument):
-            await ctx.reply("error; Missing or invalid arguments.")
+            await ctx.reply("error; Missing or invalid arguments.", mention_author=False)
             return
 
         if isinstance(error, commands.errors.TooManyArguments):
-            await ctx.reply("error; Too many arguments.")
+            await ctx.reply("error; Too many arguments.", mention_author=False)
             return
 
         if isinstance(error, commands.errors.MissingPermissions):
-            await ctx.reply("error; {0}".format(error.args[0]))
+            await ctx.reply("error; {0}".format(error.args[0]), mention_author=False)
             return
 
-        await ctx.reply("internal error; If this persists please contact the bot developer.")
+        await ctx.reply("internal error; If this persists please contact the bot developer.", mention_author=False)
         logger.error("Unhandled error in '{0}':\n{1}".format(self.COMMAND_NAME, error))
         raise error
 
@@ -386,11 +392,11 @@ class EntryBannerCog(commands.Cog):
     async def invoke(self, ctx):
         if ctx.invoked_subcommand is None:
             # TODO; add help.
-            await ctx.reply("entrybanner help is here!")
+            await ctx.reply("entrybanner help is here!", mention_author=False)
             return
 
         if ctx.invoked_subcommand.name == "set-log-channel":
-            # Always pass this through
+            # Always make this command invoke-able as it needed for initial configuration.
             return
 
         guild_entry = self._get_guild_entry(ctx.guild)
@@ -403,8 +409,7 @@ class EntryBannerCog(commands.Cog):
     async def info(self, ctx):
         msg = "Enabled: {0}".format(self._get_guild_entry(ctx.guild).enabled)
         # TODO; add more stats.
-        # mention_author=False
-        await ctx.reply(msg)
+        await ctx.reply(msg, mention_author=False)
 
     @invoke.command(ignore_extra=False)
     async def enable(self, ctx):
@@ -412,7 +417,7 @@ class EntryBannerCog(commands.Cog):
         logger.info("enabled entrybanner for {0} ({1}), done by {2} ({3})".format(
             ctx.guild.name, ctx.guild.id, "{0}#{1}".format(ctx.author.name, ctx.author.discriminator), ctx.author.id
         ))
-        await ctx.reply("{0} has been enabled".format(self.COMMAND_NAME))
+        await ctx.reply("{0} has been enabled".format(self.COMMAND_NAME), mention_author=False)
 
     @invoke.command(ignore_extra=False,)
     async def disable(self, ctx):
@@ -420,7 +425,7 @@ class EntryBannerCog(commands.Cog):
         logger.info("disabled entrybanner for {0} ({1}), done by {2} ({3})".format(
             ctx.guild.name, ctx.guild.id, "{0}#{1}".format(ctx.author.name, ctx.author.discriminator), ctx.author.id
         ))
-        await ctx.reply("{0} has been disabled".format(self.COMMAND_NAME))
+        await ctx.reply("{0} has been disabled".format(self.COMMAND_NAME), mention_author=False)
 
     @invoke.command(name="set-log-channel", ignore_extra=False)
     async def set_log_channel(self, ctx, channel: int=None):
@@ -428,7 +433,7 @@ class EntryBannerCog(commands.Cog):
             # Set either the provided channel id.
             channel = ctx.guild.get_channel(channel)
             if not channel:
-                await ctx.reply("invalid channel id.")
+                await ctx.reply("invalid channel id.", mention_author=False)
                 return
         else:
             # Or set the channel the command is invoked in.
@@ -440,14 +445,14 @@ class EntryBannerCog(commands.Cog):
             channel.name, channel.id,
             "{0}#{1}".format(ctx.author.name, ctx.author.discriminator), ctx.author.id
         ))
-        await ctx.reply("logs will be written to {0}".format(channel.mention))
+        await ctx.reply("logs will be written to {0}".format(channel.mention), mention_author=False)
 
     # Matching #
 
     @invoke.group(name="pattern", invoke_without_command=True)
     async def pattern(self, ctx):
         # TODO; help.
-        await ctx.reply("match help is here!")
+        await ctx.reply("match help is here!", mention_author=False)
 
     @pattern.command(name="add", ignore_extra=False)
     async def add_pattern(self, ctx, regex_str: str, enabled: bool=False):
@@ -465,7 +470,7 @@ class EntryBannerCog(commands.Cog):
             ctx.guild.name, ctx.guild.id,
             "{0}#{1}".format(ctx.author.name, ctx.author.discriminator), ctx.author.id
         ))
-        await ctx.reply("new pattern has been added with id {0}".format(id_))
+        await ctx.reply("new pattern has been added with id {0}".format(id_), mention_author=False)
 
     @pattern.command(name="remove", ignore_extra=False)
     async def remove_pattern(self, ctx, id_: int):
@@ -476,12 +481,12 @@ class EntryBannerCog(commands.Cog):
             ctx.guild.name, ctx.guild.id,
             "{0}#{1}".format(ctx.author.name, ctx.author.discriminator), ctx.author.id
         ))
-        await ctx.reply("removed pattern '{0}'".format(str(matcher)))
+        await ctx.reply("removed pattern '{0}'".format(str(matcher)), mention_author=False)
 
     @pattern.command(name="list", ignore_extra=False)
     async def list_patterns(self, ctx):
         gb = self._get_guild_entry(ctx.guild)
-        await ctx.reply(gb.get_pretty_pattern_list())
+        await ctx.reply(gb.get_pretty_pattern_list(), mention_author=False)
 
     @pattern.command(name="enable", ignore_extra=False)
     async def enable_pattern(self, ctx, id_: int):
@@ -490,7 +495,7 @@ class EntryBannerCog(commands.Cog):
             id_, ctx.guild.name, ctx.guild.id,
             "{0}#{1}".format(ctx.author.name, ctx.author.discriminator), ctx.author.id
         ))
-        await ctx.reply("enabled.")
+        await ctx.reply("enabled.", mention_author=False)
 
     @pattern.command(name="disable", ignore_extra=False)
     async def disable_pattern(self, ctx, id_: int):
@@ -499,4 +504,4 @@ class EntryBannerCog(commands.Cog):
             id_, ctx.guild.name, ctx.guild.id,
             "{0}#{1}".format(ctx.author.name, ctx.author.discriminator), ctx.author.id
         ))
-        await ctx.reply("disabled.")
+        await ctx.reply("disabled.", mention_author=False)
