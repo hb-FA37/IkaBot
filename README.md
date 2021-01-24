@@ -18,5 +18,5 @@ and running it from source. This can all be done using make commands:
 > make venv
 
 # Set config envvars and run the bot.
-env IKA_DISCORD_TOKEN=$DISCORD_BOT_TOKEN IKA_LOG_PATH=$LOG_DIRECTORY IKA_DATA_PATH=$DATA_DIRECTORY make run
+> env IKA_DISCORD_TOKEN=$DISCORD_BOT_TOKEN IKA_LOG_PATH=$LOG_DIRECTORY IKA_DATA_PATH=$DATA_DIRECTORY make run
 ```
