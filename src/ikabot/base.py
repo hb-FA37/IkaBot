@@ -24,10 +24,11 @@ intents.members = True
 # Create the bot.
 bot = commands.Bot(intents=intents, command_prefix="$")
 
-# @bot.event
+
+@bot.event
 async def on_command_error(ctx, error):
-    """Eat all check or argument failures, raise exceptions for everthing else."""
     if isinstance(error, commands.errors.CheckFailure):
+        # Silently ignore checks that failed.
         return
 
     if isinstance(error, discord.ext.commands.errors.MissingRequiredArgument) or isinstance(error, discord.ext.commands.errors.BadArgument):
@@ -35,14 +36,14 @@ async def on_command_error(ctx, error):
         if ctx.prefix and ctx.command:
             command = " {0}{1}".format(ctx.prefix, ctx.command)
 
-        await ctx.send("{0} invalid arguments for{1}".format(
+        await ctx.reply("{0} invalid arguments for{1}".format(
             ctx.author.mention, command
-        ))
+        ), mention_author=False)
         return
 
-    logger.debug('ignoring exception in command {0}:'.format(ctx.command))
-    # TODO; ??
-    print('Ignoring exception in command {0}:'.format(ctx.command), file=sys.stderr)
+    logger.exception('ignoring exception in command {0}:'.format(ctx.command))
+
+    print("ignoring exception in command {0}:".format(ctx.command), file=sys.stderr)
     traceback.print_exception(type(error), error, error.__traceback__, file=sys.stderr)
 
 
@@ -80,13 +81,13 @@ async def purge_reactions_of_user(ctx, user: discord.User, amount: int=100):
     Purges all reactions of a certain user in the called channel.
     """
     if amount < 0:
-        await ctx.send(
-            "{0} amount must be a positive number.".format(ctx.author.mention)
+        await ctx.reply(
+            "{0} amount must be a positive number.".format(ctx.author.mention), mention_author=False
         )
         return
     if amount > 512:
-        await ctx.send(
-            "{0} amount must be less then 512".format(ctx.author.mention)
+        await ctx.reply(
+            "{0} amount must be less then 512".format(ctx.author.mention), mention_author=False
         )
         return
 
@@ -105,7 +106,7 @@ async def purge_reactions_of_message(ctx, message: discord.Message):
     It uses a fancy setup menu to select which emote to purge.
     """
     if not message.reactions:
-        await ctx.reply("message has no reactions to purge.")
+        await ctx.reply("message has no reactions to purge.", mention_author=False)
         return
 
     msg = "React to the letter for the emote to purge:\n```\n"
@@ -135,9 +136,9 @@ async def purge_reactions_of_message(ctx, message: discord.Message):
             str(reaction.emoji) in reaction_mapping
 
     try:
-        reaction, _ = await bot.wait_for('reaction_add', check=check, timeout=20.0)
+        reaction, _ = await bot.wait_for("reaction_add", check=check, timeout=20.0)
     except asyncio.TimeoutError:
-        await message.reply("Command timed out, you have 20 seconds to select which emote to remove.")
+        await message.reply("command timed out; you have 20 seconds to select which emote to remove.", mention_author=False)
         return
 
     await reaction_mapping[reaction.emoji].clear()
