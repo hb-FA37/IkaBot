@@ -19,6 +19,10 @@ class InvalidMatcherId(EntryBannerError):
     pass
 
 
+class NoLogChannelConfigured(EntryBannerError):
+    pass
+
+
 class EntryBannerCogError(EntryBannerError):
 
    def __init__(self, message):
@@ -43,11 +47,15 @@ class EntryBannerDataStore(object):
         if self.__json:
             return self.__json
 
-        if not os.path.exists((self.__json_path)):
-            self.__json = dict()
-        else:
+        self.__json = dict()
+        if os.path.exists((self.__json_path)):
             with open(self.__json_path) as infile:
-                self.__json = json.load(infile)
+                json_data = json.load(infile)
+
+            for k, v in json_data.items():
+                # json only allows key names to be strings, so we need to convert
+                # it back to int so we can keep using the key as the guild id.s
+                self.__json[int(k)] = v
 
     def get(self):
         if self.__json:
@@ -97,6 +105,14 @@ class MemberMatcher(object):
             "enabled": self.__enabled,
             "metadata": self.__metadata,
         }
+
+    @staticmethod
+    def create_from_json(data_dict):
+        return MemberMatcher(
+            re.compile(data_dict["pattern"]),
+            data_dict["enabled"],
+            data_dict["metadata"]
+        )
 
     @property
     def enabled(self):
@@ -156,6 +172,26 @@ class GuildEntryBanner(object):
             "patterns": [m.json() for m in self.__matchers],
         }
 
+    @staticmethod
+    def create_from_json(bot, update_cb, guild_json):
+        guild_id = guild_json["guild_id"]
+        guild = bot.get_guild(guild_id)
+        if not guild:
+            logger.error("failed to create GuildEntryBanner for guild id {0}, cannot find guild.".format(
+                guild_id
+            ))
+            return None
+
+        log_channel = guild.get_channel(guild_json["log_channel_id"])
+        if not log_channel:
+            logger.error("failed to fetch log channel {0} for guild id {1}, cannot find channel.".format(
+                guild_json["log_channel_id"], guild_id
+            ))
+
+        matchers = [MemberMatcher.create_from_json(p) for p in  guild_json["patterns"]]
+
+        return GuildEntryBanner(guild, log_channel, guild_json["enabled"], update_cb, matchers=matchers)
+
     @property
     def guild(self):
         return self.__guild
@@ -166,6 +202,7 @@ class GuildEntryBanner(object):
 
     def set_log_channel(self, channel):
         self.__log_channel = channel
+        self.__update_cb(self)
 
     @property
     def enabled(self):
@@ -211,12 +248,15 @@ class GuildEntryBanner(object):
 
         msg = "Current patterns:"
         for i, matcher in enumerate(self.__matchers):
-            msg += "\n{0}. {1}".format(i, str(matcher))
+            msg += "\n{0}. {1}{2}".format(
+                i, str(matcher), "" if matcher.enabled else "   (disabled)"
+            )
 
         return msg
 
     def add_ban(self, member, id_):
         self.__matchers[id_].add_ban(member.id)
+        self.__update_cb(self)
 
     # Matching #
 
@@ -241,16 +281,58 @@ class EntryBannerCog(commands.Cog):
         self.__bot =  bot
         self.__data_store = data_store
         self.__guild_mapping = dict()
+        self._load_guild_mapping()
+
+    def _load_guild_mapping(self):
+        for guild_json in self.__data_store.get().values():
+            try:
+                guild_entry = GuildEntryBanner.create_from_json(
+                    self.__bot, self.__data_store.update, guild_json
+                )
+            except Exception as err:
+                # We still keep this guild in the data store, if the guild comes back proper we need
+                # to restart the bot for the data to get loaded. If we don't we will override the guild
+                # data we have with a new instance.
+                # TODO; will be better when moving to a database.
+                logger.exception(
+                    "failed to init guild from the following data: {0}".format(guild_json)
+                )
+                continue
+
+            self.__guild_mapping[guild_entry.guild.id] = guild_entry
+
+    def _init_guild_entry(self, guild):
+        guild_entry = GuildEntryBanner(guild, None, False, self.__data_store.update)
+        self.__data_store.update(guild_entry)
+        return guild_entry
+
+    def _get_guild_entry(self, guild):
+        guild_entry = self.__guild_mapping.get(guild.id)
+        if not guild_entry:
+            logging.info("creating new guild entry for {0}".format(guild.id))
+            guild_entry = self._init_guild_entry(guild)
+            self.__guild_mapping[guild.id] = guild_entry
+
+        return guild_entry
+
+    # Events #
 
     async def cog_command_error(self, ctx, error):
         """Eat all argument failures, our own exceptions and raise exceptions for everything else."""
-        if isinstance(error, InvalidMatcherId):
-            await ctx.reply("invalid pattern id.")
-            return
+        if isinstance(error, commands.errors.CommandInvokeError):
+            original = error.original
 
-        if isinstance(error, EntryBannerCogError):
-            await ctx.reply(error.message)
-            return
+            if isinstance(original, InvalidMatcherId):
+                await ctx.reply("invalid pattern id.")
+                return
+
+            if isinstance(original, NoLogChannelConfigured):
+                await ctx.reply("configure a log channel (set-log-channel) before invoking any commands.")
+                return
+
+            if isinstance(original, EntryBannerCogError):
+                await ctx.reply(error.message)
+                return
 
         if isinstance(error, commands.errors.MissingRequiredArgument) or isinstance(error, commands.errors.BadArgument):
             await ctx.reply("error; Missing or invalid arguments.")
@@ -271,18 +353,19 @@ class EntryBannerCog(commands.Cog):
     @commands.Cog.listener()
     async def on_member_join(self, member):
         # Do not make a default one if this gets invoked.
-        guild_banner = self.__guild_mapping.get(member.guild.id)
-        if not guild_banner:
-            return
-        if guild_banner.log_channel is None:
-            logger.warning("{0} ({1}) does not have a log channel configured, skipping join check.".format(
-                member.guild.name, member.guild.id
-            ))
+        guild_entry = self.__guild_mapping.get(member.guild.id)
+        if not guild_entry:
             return
 
-        matcher_id = guild_banner.validate_member(member)
-        if matcher_id:
-            await guild_banner.log_channel.send("banning {0}#{1} ({2}) due to pattern {3}.".format(
+        matcher_id = guild_entry.validate_member(member)
+        if matcher_id is not None:
+            if guild_entry.log_channel is None:
+                logger.warning("{0} ({1}) does not have a log channel configured, skipping banning {2} ({3}) / {4} due to pattern {5}.".format(
+                    member.guild.name, member.guild.id, member.name, member.discriminator, member.id, matcher_id
+                ))
+                return
+
+            await guild_entry.log_channel.send("banning {0}#{1} ({2}) due to pattern {3}.".format(
                 member.name, member.discriminator, member.id, matcher_id
             ))
             logger.info("banning {0}#{1} from {2} ({3}) / {4} due to pattern {5}".format(
@@ -290,41 +373,42 @@ class EntryBannerCog(commands.Cog):
             ))
 
             await member.ban(delete_message_days=0)
-            guild_banner.add_ban(member, matcher_id)
+            guild_entry.add_ban(member, matcher_id)
 
             logger.debug("banned {0}#{1} from {2} ({3}) / {4} due to pattern {5}".format(
                 member.name, member.discriminator, member.id, member.guild.name, member.guild.id, matcher_id
             ))
 
+    # Commands #
+
     @commands.has_permissions(administrator=True)
-    @commands.group(name=COMMAND_NAME, invoke_without_command=True)
+    @commands.group(name=COMMAND_NAME)
     async def invoke(self, ctx):
-        # TODO; add help.
-        await ctx.reply("entrybanner help is here!")
+        if ctx.invoked_subcommand is None:
+            # TODO; add help.
+            await ctx.reply("entrybanner help is here!")
+            return
 
-    def _get_guild_banner(self, guild):
-        guild_banner = self.__guild_mapping.get(guild.id)
-        if not guild_banner:
-            guild_banner = self._init_guild_banner(guild)
-            self.__guild_mapping[guild.id] = guild_banner
-        return guild_banner
+        if ctx.invoked_subcommand.name == "set-log-channel":
+            # Always pass this through
+            return
 
-    def _init_guild_banner(self, guild):
-        guild_entry = GuildEntryBanner(guild, None, self.__data_store.update, False)
-        self.__data_store.update(guild_entry)
-        return guild_entry
+        guild_entry = self._get_guild_entry(ctx.guild)
+        if not guild_entry.log_channel:
+            raise NoLogChannelConfigured()
 
     # Basic #
 
     @invoke.command(ignore_extra=False)
     async def info(self, ctx):
-        msg = "Enabled: {0}".format(self._get_guild_banner(ctx.guild).enabled)
+        msg = "Enabled: {0}".format(self._get_guild_entry(ctx.guild).enabled)
         # TODO; add more stats.
+        # mention_author=False
         await ctx.reply(msg)
 
     @invoke.command(ignore_extra=False)
     async def enable(self, ctx):
-        self._get_guild_banner(ctx.guild).enable()
+        self._get_guild_entry(ctx.guild).enable()
         logger.info("enabled entrybanner for {0} ({1}), done by {2} ({3})".format(
             ctx.guild.name, ctx.guild.id, "{0}#{1}".format(ctx.author.name, ctx.author.discriminator), ctx.author.id
         ))
@@ -332,7 +416,7 @@ class EntryBannerCog(commands.Cog):
 
     @invoke.command(ignore_extra=False,)
     async def disable(self, ctx):
-        self._get_guild_banner(ctx.guild).disable()
+        self._get_guild_entry(ctx.guild).disable()
         logger.info("disabled entrybanner for {0} ({1}), done by {2} ({3})".format(
             ctx.guild.name, ctx.guild.id, "{0}#{1}".format(ctx.author.name, ctx.author.discriminator), ctx.author.id
         ))
@@ -350,7 +434,7 @@ class EntryBannerCog(commands.Cog):
             # Or set the channel the command is invoked in.
             channel = ctx.channel
 
-        self._get_guild_banner(ctx.guild).set_log_channel(channel)
+        self._get_guild_entry(ctx.guild).set_log_channel(channel)
         logger.info("log channel set to {0} ({1}) in {2} ({3}), done by {4} ({5})".format(
             ctx.guild.name, ctx.guild.id,
             channel.name, channel.id,
@@ -375,7 +459,7 @@ class EntryBannerCog(commands.Cog):
             raise EntryBannerError(msg)
 
         matcher = MemberMatcher(pattern, False, MemberMatcher.create_new_metadata(ctx))
-        id_ = self._get_guild_banner(ctx.guild).add_matcher(matcher)
+        id_ = self._get_guild_entry(ctx.guild).add_matcher(matcher)
         logger.info("added pattern {0} ({1}) in {2} ({3}), done by {4} ({5})".format(
             pattern, id_,
             ctx.guild.name, ctx.guild.id,
@@ -385,7 +469,7 @@ class EntryBannerCog(commands.Cog):
 
     @pattern.command(name="remove", ignore_extra=False)
     async def remove_pattern(self, ctx, id_: int):
-        gb = self._get_guild_banner(ctx.guild)
+        gb = self._get_guild_entry(ctx.guild)
         matcher = gb.pop_matcher(id_)
         logger.info("removed pattern {0} ({1}) in {2} ({3}), done by {4} ({5})".format(
             matcher, id_,
@@ -396,12 +480,12 @@ class EntryBannerCog(commands.Cog):
 
     @pattern.command(name="list", ignore_extra=False)
     async def list_patterns(self, ctx):
-        gb = self._get_guild_banner(ctx.guild)
+        gb = self._get_guild_entry(ctx.guild)
         await ctx.reply(gb.get_pretty_pattern_list())
 
     @pattern.command(name="enable", ignore_extra=False)
     async def enable_pattern(self, ctx, id_: int):
-        self._get_guild_banner(ctx.guild).enable_matcher()
+        self._get_guild_entry(ctx.guild).enable_matcher(id_)
         logger.info("enabled pattern {0} in {1} ({2}), done by {3} ({4})".format(
             id_, ctx.guild.name, ctx.guild.id,
             "{0}#{1}".format(ctx.author.name, ctx.author.discriminator), ctx.author.id
@@ -410,7 +494,7 @@ class EntryBannerCog(commands.Cog):
 
     @pattern.command(name="disable", ignore_extra=False)
     async def disable_pattern(self, ctx, id_: int):
-        self._get_guild_banner(ctx.guild).disable_matcher()
+        self._get_guild_entry(ctx.guild).disable_matcher(id_)
         logger.info("disabled pattern {0} in {1} ({2}), done by {3} ({4})".format(
             id_, ctx.guild.name, ctx.guild.id,
             "{0}#{1}".format(ctx.author.name, ctx.author.discriminator), ctx.author.id
