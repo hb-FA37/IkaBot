@@ -79,15 +79,17 @@ class EntryBannerDataStore(object):
 
 class MemberMatcher(object):
 
-    def __init__(self, pattern, enabled, metadata):
+    def __init__(self, pattern, enabled, lower, metadata):
         """Accepts a member and returns if it matches the conditions of this matcher.
         Args:
             pattern (re.Pattern): pattern to match the members name to.
             enabled (bool): is this matcher enabled.
+            lower (bool): lowercase the user's name first before applying the pattern.
             metadata (dict): dict of additional metadata.
         """
         self.__pattern = pattern
         self.__enabled = enabled
+        self.__lower = lower
         self.__metadata = metadata or dict()
 
     @staticmethod
@@ -104,6 +106,7 @@ class MemberMatcher(object):
             "pattern": self.__pattern.pattern,
             "enabled": self.__enabled,
             "metadata": self.__metadata,
+            "lower": self.__lower,
         }
 
     @staticmethod
@@ -111,7 +114,8 @@ class MemberMatcher(object):
         return MemberMatcher(
             re.compile(data_dict["pattern"]),
             data_dict["enabled"],
-            data_dict["metadata"]
+            data_dict["metadata"],
+            data_dict["lower"],
         )
 
     @property
@@ -135,16 +139,21 @@ class MemberMatcher(object):
         Returns:
             bool: true if it matches, false if not or the matching is disabled.
         """
-        if self.enabled and self.__pattern.match(member.name):
-            return True
+        if self.enabled:
+            name = member.name
+            if self.__lower:
+                name = name.lower()
+            if self.__pattern.match(member.name):
+                return True
+
         return False
 
     def __str__(self):
         return str(self.__pattern.pattern)
 
     def __repr__(self):
-        return "MemberMatcher(regex={0}, enabled={1}".format(
-            self.__pattern, self.__enabled
+        return "MemberMatcher(regex={0}, enabled={1}, lower={2}".format(
+            self.__pattern, self.__enabled, self.__lower
         )
 
 
@@ -449,13 +458,13 @@ class EntryBannerCog(commands.Cog):
 
     # Matching #
 
-    @invoke.group(name="pattern", invoke_without_command=True)
-    async def pattern(self, ctx):
+    @invoke.group(name="regex", invoke_without_command=True)
+    async def regex(self, ctx):
         # TODO; help.
         await ctx.reply("match help is here!", mention_author=False)
 
-    @pattern.command(name="add", ignore_extra=False)
-    async def add_pattern(self, ctx, regex_str: str, enabled: bool=False):
+    @regex.command(name="add", ignore_extra=False)
+    async def add_regex(self, ctx, regex_str: str, lower: bool=False):
         try:
             pattern = re.compile(regex_str)
         except Exception as err:
@@ -463,17 +472,17 @@ class EntryBannerCog(commands.Cog):
             logger.exception("failed to compile regex '{0}'".format(regex_str))
             raise EntryBannerError(msg)
 
-        matcher = MemberMatcher(pattern, False, MemberMatcher.create_new_metadata(ctx))
+        matcher = MemberMatcher(pattern, True, lower, MemberMatcher.create_new_metadata(ctx))
         id_ = self._get_guild_entry(ctx.guild).add_matcher(matcher)
-        logger.info("added pattern {0} ({1}) in {2} ({3}), done by {4} ({5})".format(
+        logger.info("added regex {0} ({1}) in {2} ({3}), done by {4} ({5})".format(
             pattern, id_,
             ctx.guild.name, ctx.guild.id,
             "{0}#{1}".format(ctx.author.name, ctx.author.discriminator), ctx.author.id
         ))
-        await ctx.reply("new pattern has been added with id {0}".format(id_), mention_author=False)
+        await ctx.reply("new regex has been added with id {0}".format(id_), mention_author=False)
 
-    @pattern.command(name="remove", ignore_extra=False)
-    async def remove_pattern(self, ctx, id_: int):
+    @regex.command(name="remove", ignore_extra=False)
+    async def remove_regex(self, ctx, id_: int):
         gb = self._get_guild_entry(ctx.guild)
         matcher = gb.pop_matcher(id_)
         logger.info("removed pattern {0} ({1}) in {2} ({3}), done by {4} ({5})".format(
@@ -483,12 +492,12 @@ class EntryBannerCog(commands.Cog):
         ))
         await ctx.reply("removed pattern '{0}'".format(str(matcher)), mention_author=False)
 
-    @pattern.command(name="list", ignore_extra=False)
+    @regex.command(name="list", ignore_extra=False)
     async def list_patterns(self, ctx):
         gb = self._get_guild_entry(ctx.guild)
         await ctx.reply(gb.get_pretty_pattern_list(), mention_author=False)
 
-    @pattern.command(name="enable", ignore_extra=False)
+    @regex.command(name="enable", ignore_extra=False)
     async def enable_pattern(self, ctx, id_: int):
         self._get_guild_entry(ctx.guild).enable_matcher(id_)
         logger.info("enabled pattern {0} in {1} ({2}), done by {3} ({4})".format(
@@ -497,7 +506,7 @@ class EntryBannerCog(commands.Cog):
         ))
         await ctx.reply("enabled.", mention_author=False)
 
-    @pattern.command(name="disable", ignore_extra=False)
+    @regex.command(name="disable", ignore_extra=False)
     async def disable_pattern(self, ctx, id_: int):
         self._get_guild_entry(ctx.guild).disable_matcher(id_)
         logger.info("disabled pattern {0} in {1} ({2}), done by {3} ({4})".format(
