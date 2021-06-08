@@ -101,7 +101,7 @@ async def purge_reactions_of_user(ctx, user: discord.User, amount: int=100):
 async def purge_reactions_of_message(ctx, message: discord.Message):
     """
     Purges all reactions of a certain emote of a given message. This tool is mostly handy to remove
-    the reaction of a banner or deleted account as that cannot be removed to the discord interface.
+    the reaction of a banned or deleted account as that cannot be removed using the discord interface.
 
     It uses a fancy setup menu to select which emote to purge.
     """
