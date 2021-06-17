@@ -1,16 +1,15 @@
-import asyncio
+"""
+Base and global setup of the bot.
+"""
+
 import logging
-import os
-import string
 import sys
 import traceback
-
-from collections import OrderedDict
 
 import discord
 from discord.ext import commands
 
-from ikabot import REGIONAL_EMOJI_STRINGS
+from .database import Guild, session
 
 
 logger = logging.getLogger(__name__)
@@ -47,102 +46,13 @@ async def on_command_error(ctx, error):
     traceback.print_exception(type(error), error, error.__traceback__, file=sys.stderr)
 
 
-# Simple utility commands.
+# Other.
 
 
 @bot.command()
 @commands.is_owner()
 async def shutdown(ctx):
     logger.info("IkaBot shutting down..")
-    await ctx.reply("shutting down..")
+    await ctx.reply("Shutting down...")
     await ctx.bot.logout()
-    logger.info("IkaBot shut down")
-
-
-@bot.command()
-@commands.is_owner()
-async def ping(ctx):
-    await ctx.reply("pong!")
-
-
-@bot.command()
-@commands.is_owner()
-async def pong(ctx):
-    await ctx.reply("ping!")
-
-
-# Mass delete reaction tools.
-
-
-@bot.command("purge-user-reactions", ignore_extra=False)
-@commands.is_owner()
-async def purge_reactions_of_user(ctx, user: discord.User, amount: int=100):
-    """
-    Purges all reactions of a certain user in the called channel.
-    """
-    if amount < 0:
-        await ctx.reply(
-            "{0} amount must be a positive number.".format(ctx.author.mention), mention_author=False
-        )
-        return
-    if amount > 512:
-        await ctx.reply(
-            "{0} amount must be less then 512".format(ctx.author.mention), mention_author=False
-        )
-        return
-
-    async for msg in ctx.channel.history(limit=amount):
-        for reaction in msg.reactions:
-            await reaction.remove(user)
-
-
-@bot.command("purge-message-reactions", ignore_extra=False)
-@commands.is_owner()
-async def purge_reactions_of_message(ctx, message: discord.Message):
-    """
-    Purges all reactions of a certain emote of a given message. This tool is mostly handy to remove
-    the reaction of a banned or deleted account as that cannot be removed using the discord interface.
-
-    It uses a fancy setup menu to select which emote to purge.
-    """
-    if not message.reactions:
-        await ctx.reply("message has no reactions to purge.", mention_author=False)
-        return
-
-    msg = "React to the letter for the emote to purge:\n```\n"
-
-    alphabet = list(string.ascii_lowercase)
-    reaction_mapping = OrderedDict()
-
-    for reaction in message.reactions:
-        letter = alphabet.pop(0)
-        reaction_mapping[REGIONAL_EMOJI_STRINGS[letter]] = reaction
-
-        if isinstance(reaction.emoji, str):
-            # Unicode emoji.
-            msg +=  letter + " - " + reaction.emoji + "\n"
-        else:
-            # Emoji or PartialEmoji
-            msg +=  letter + " - " + reaction.emoji.name + "\n"
-
-    msg += "```"
-
-    menu_message = await ctx.send(msg)
-    for key in reaction_mapping.keys():
-        await menu_message.add_reaction(key)
-
-    def check(reaction, user):
-        return reaction.message == menu_message and user == ctx.author and \
-            str(reaction.emoji) in reaction_mapping
-
-    try:
-        reaction, _ = await bot.wait_for("reaction_add", check=check, timeout=20.0)
-    except asyncio.TimeoutError:
-        await message.reply("command timed out; you have 20 seconds to select which emote to remove.", mention_author=False)
-        return
-
-    await reaction_mapping[reaction.emoji].clear()
-    await menu_message.edit(
-        content="cleared {0}".format(reaction.emoji if isinstance(reaction.emoji, str) else reaction.emoji.name)
-    )
-    await menu_message.clear_reactions()
+    logger.info("IkaBot shut down.")
