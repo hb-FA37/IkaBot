@@ -1,30 +1,37 @@
 import os
 import logging
+from logging.handlers import RotatingFileHandler
 
 
 def _setup_logging(logpath, print_debug=False):
     """Setup logging.
     Args:
         logpath (str): directory to dump log files in.
+        print_debug (bool): print debug messages to the console/terminal, default is False.
     """
+
+    log_format_string = "%(asctime)s - %(levelname)s - %(name)s :: %(message)s"
+
     logger = logging.getLogger()
     logger.setLevel(logging.DEBUG)
 
-    formatter = logging.Formatter("%(levelname)s - %(name)s :: %(message)s")
+    formatter = logging.Formatter(log_format_string)
     handler = logging.StreamHandler()
     handler.setFormatter(formatter)
     handler.setLevel(logging.DEBUG if print_debug else logging.INFO)
     logger.addHandler(handler)
 
     if not logpath:
-        logging.info("file logging not configured")
+        logging.warning("logpath not provided, logs are not saved!")
         return
 
-    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(name)s :: %(message)s")
-    handler = logging.FileHandler(
+    formatter = logging.Formatter(log_format_string)
+    handler = RotatingFileHandler(
         filename=os.path.join(logpath, "ikabot.log"),
         encoding="utf-8",
-        mode="a",
+        # 10 MB log files.
+        maxBytes=1024*1024*10,
+        backupCount=10,
     )
     handler.setFormatter(formatter)
     handler.setLevel(logging.DEBUG)
