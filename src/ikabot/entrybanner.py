@@ -1,6 +1,8 @@
 import logging
 import re
+from typing import ContextManager
 
+from discord import Embed
 from discord.ext import commands
 
 from .base import NoLogChannelConfigured
@@ -124,8 +126,7 @@ class EntryBannerCog(commands.Cog):
     @commands.group(name=COMMAND_NAME)
     async def invoke(self, ctx):
         if ctx.invoked_subcommand is None:
-            # TODO; add help.
-            await ctx.reply("entrybanner help is here!", mention_author=False)
+            await self.help(ctx)
             return
 
         guild = session.get(Guild, ctx.guild.id)
@@ -137,8 +138,17 @@ class EntryBannerCog(commands.Cog):
 
     @invoke.command(ignore_extra=False)
     async def help(self, ctx):
-        # TODO; add help.
-        await ctx.reply("entrybanner help is here!", mention_author=False)
+        description = """
+            Checks if a members name matches a certain regex when they join the discord,
+            if they do they are banned automatically. The name is the part of users discord id before the '#'.
+        """
+        embed=Embed(title="entrybanner", description=description,color=0xe70808)
+        embed.add_field(name="help", value="Shows this help.", inline=False)
+        embed.add_field(name="info", value="Show basic stats.", inline=False)
+        embed.add_field(name="enable", value="Enabled the entrybanner.", inline=False)
+        embed.add_field(name="disable", value="Disabled the entrybanner.", inline=False)
+        embed.add_field(name="regex", value="Manage the regexes, for more info use \"regex help\"", inline=False)
+        await ctx.send(embed=embed, mention_author=False)
 
     @invoke.command(ignore_extra=False)
     async def info(self, ctx):
@@ -178,12 +188,28 @@ class EntryBannerCog(commands.Cog):
         await ctx.reply("Entrybanner has been disabled.", mention_author=False)
 
 
-    # Matching #
+    # Regex #
 
     @invoke.group(name="regex", invoke_without_command=True)
     async def regex(self, ctx):
-        # TODO; add help.
-        await ctx.reply("regex help is here!", mention_author=False)
+        await self.help_regex(ctx)
+
+    @regex.command(name="help", invoke_without_command=True)
+    async def help_regex(self, ctx):
+        discription = """
+            Add, remove, enable and disable regexes. Regexes can be prototyped and tested at https://pythex.org ."
+        """
+        embed=Embed(title="regex", description=discription, color=0x22e708)
+        value = """
+            Adds the given *regex* to the entrybanner. Optional argument *lowercase* is False by default.
+            If set to True the regex will first lowercase the user's name before matching it.
+        """
+        embed.add_field(name="add regex [lowercase]", value=value, inline=False)
+        embed.add_field(name="remove id", value="Removes the regex with the given *id* from the entrybanner.", inline=False)
+        embed.add_field(name="list", value="Lists all regexes.", inline=False)
+        embed.add_field(name="enable id", value="Enables the regex with *id* for matching.", inline=False)
+        embed.add_field(name="disable id", value="Disables the regex with *id* for matching.", inline=False)
+        await ctx.send(embed=embed, mention_author=False)
 
     @regex.command(name="add", ignore_extra=False)
     async def add_regex(self, ctx, regex_str: str, lowercase: bool=False):
